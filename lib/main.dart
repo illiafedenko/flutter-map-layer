@@ -1,9 +1,6 @@
-// ignore_for_file: avoid_print, prefer_const_constructors
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
-
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 void main() {
@@ -29,17 +26,14 @@ class MapPage extends StatefulWidget {
   const MapPage({super.key});
 
   @override
-  // ignore: library_private_types_in_public_api
   _MapPageState createState() => _MapPageState();
 }
 
 class _MapPageState extends State<MapPage> {
-  GoogleMapController? mapController; //controller for Google map
-  final LatLng _center = const LatLng(26.3005351, 50.182); //center of the map
+  GoogleMapController? mapController;
+  final LatLng _center = const LatLng(26.3005351, 50.182);
   final Set<Polygon> _polygons = <Polygon>{};
-  final Set<Marker> _markers = <Marker>{};
   dynamic polygonData;
-  dynamic markerData;
 
   void _showInfo(dynamic info) {
     try {
@@ -80,48 +74,42 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
-  Future<dynamic> _loadGeoJsonFromAssets(String path) async {
-    String data = await rootBundle.loadString(path);
-    return jsonDecode(data)['features'];
-  }
+  Future<void> fetchData(VoidCallback onDone) async {
+    // Simulate fetching data from the network
+    final response = await http.get(Uri.parse(
+        'http://34.72.17.139:8080/geoserver/map_layers_m/wms?service=WMS&version=1.1.0&request=GetMap&layers=map_layers_m%3Aeast_dist_gs&bbox=47.005306243896484%2C25.90535545349121%2C50.24072265625%2C28.50123405456543&width=768&height=616&srs=EPSG%3A4326&styles=&format=geojson'));
 
-  Future<void> _loadPolygonJson() async {
-    try {
-      final polygonJson = await _loadGeoJsonFromAssets('assets/hex_ex.geojson');
+    if (response.statusCode == 200) {
+      dynamic datas = jsonDecode(utf8.decode(response.bodyBytes))['features'];
       setState(() {
-        polygonData = polygonJson;
+        polygonData = datas;
+        onDone(); // Call the provided callback after setting the state
       });
-    } catch (e) {
-      print(e);
+    } else {
+      throw Exception('Failed to load data');
     }
   }
 
-  Future<void> _loadPointJson() async {
-    try {
-      final markerJson = await _loadGeoJsonFromAssets('assets/poi_ex.geojson');
-      setState(() {
-        for (int i = 0; i < markerJson.length; i++) {
-          _markers.add(
-            Marker(
-              markerId: MarkerId('marker_$i'),
-              position: LatLng(markerJson[i]['properties']['latitude'],
-                  markerJson[i]['properties']['longitude']),
-              icon: BitmapDescriptor.defaultMarkerWithHue(
-                BitmapDescriptor.hueCyan, // Predefined color for the marker
-              ),
-              consumeTapEvents: true,
-              onTap: () => {_showInfo(markerJson[i]['properties'])},
-            ),
-          );
-        }
-      });
-    } catch (e) {
-      print(e);
-    }
+  @override
+  void initState() {
+    super.initState();
+    fetchData(() {
+      // This will run after the fetchData logic completes and the state is set.
+      if (_center != null && mapController != null) {
+        _onMapCreated(mapController!);
+      }
+    });
   }
 
   void _onMapCreated(GoogleMapController controller) {
     mapController = controller;
+    // Ensure the data has been fetched before creating polygons
+    if (polygonData != null) {
+      createPolygons();
+    }
+  }
+
+  void createPolygons() {
     setState(() {
       for (final feature in polygonData) {
         if (feature['geometry']['type'] == 'Polygon') {
@@ -131,7 +119,7 @@ class _MapPageState extends State<MapPage> {
 
           for (final List<dynamic> point in coordinates) {
             polygonCoordinates.add(
-              LatLng(point[1], point[0]),
+              LatLng(point[1].toDouble(), point[0].toDouble()),
             );
           }
           final Polygon polygon = Polygon(
@@ -152,29 +140,19 @@ class _MapPageState extends State<MapPage> {
   }
 
   @override
-  void initState() {
-    super.initState();
-    _loadPolygonJson();
-    _loadPointJson();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(
-          title: Text('Hexagon & Point Layer App'),
-          backgroundColor: Colors.green[700],
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Hexagon & Point Layer App'),
+        backgroundColor: Colors.green[700],
+      ),
+      body: GoogleMap(
+        onMapCreated: _onMapCreated,
+        initialCameraPosition: CameraPosition(
+          target: _center,
+          zoom: 9,
         ),
-        body: GoogleMap(
-          onMapCreated: _onMapCreated,
-          initialCameraPosition: CameraPosition(
-            target: _center,
-            zoom: 15.0,
-          ),
-          polygons: _polygons,
-          markers: _markers,
-        ),
+        polygons: _polygons,
       ),
     );
   }
